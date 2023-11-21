@@ -1,40 +1,61 @@
-import altair as alt
-import numpy as np
-import pandas as pd
 import streamlit as st
+import requests
+import zipfile
+import io
+import duckdb
+import os
 
-"""
-# Welcome to Streamlit!
+def download_and_extract_zip(url, extract_to='.'):
+    """
+    Download a ZIP file and extract its contents.
+    """
+    response = requests.get(url)
+    with zipfile.ZipFile(io.BytesIO(response.content)) as thezip:
+        thezip.extractall(path=extract_to)
+        # print("Extracted files:", thezip.namelist())  # 打印解压的文件列表
 
-Edit `/streamlit_app.py` to customize this app to your heart's desire :heart:.
-If you have any questions, checkout our [documentation](https://docs.streamlit.io) and [community
-forums](https://discuss.streamlit.io).
+def list_files_in_directory(directory):
+    """
+    列出指定目录下的所有文件。
+    """
+    return [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
 
-In the meantime, below is an example of what you can do with just a few lines of code:
-"""
+def sniff_csv_with_duckdb(csv_file_path):
+    """
+    使用 DuckDB 来嗅探 CSV 文件的列名和部分数据。
+    """
+    conn = duckdb.connect(database=':memory:')
+    query = f"SELECT * FROM read_csv_auto('{csv_file_path}', SAMPLE_SIZE=1048576) LIMIT 100"
+    result = conn.execute(query).fetchdf()
+    return result
 
-num_points = st.slider("Number of points in spiral", 1, 10000, 1100)
-num_turns = st.slider("Number of turns in spiral", 1, 300, 31)
+def main():
+    # 设置Streamlit应用的标题
+    st.title("CSV文件探索器")
 
-indices = np.linspace(0, 1, num_points)
-theta = 2 * np.pi * num_turns * indices
-radius = indices
+    # 1. Download and extract the ZIP file
+    zip_url = "https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_foundation_food_csv_2023-10-26.zip"
+    extract_folder = 'extracted_csv'
+    download_and_extract_zip(zip_url, extract_to=extract_folder)
 
-x = radius * np.cos(theta)
-y = radius * np.sin(theta)
+    # 选择文件夹
+    folder_path = 'extracted_csv/FoodData_Central_foundation_food_csv_2023-10-26'
+    if os.path.exists(folder_path):
+        files = list_files_in_directory(folder_path)
+        selected_file = st.selectbox("选择一个文件", files)
 
-df = pd.DataFrame({
-    "x": x,
-    "y": y,
-    "idx": indices,
-    "rand": np.random.randn(num_points),
-})
+        if selected_file:
+            # 显示文件的列名和数据
+            csv_file_path = os.path.join(folder_path, selected_file)
+            df = sniff_csv_with_duckdb(csv_file_path)
+            columns = df.columns.tolist()
 
-st.altair_chart(alt.Chart(df, height=700, width=700)
-    .mark_point(filled=True)
-    .encode(
-        x=alt.X("x", axis=None),
-        y=alt.Y("y", axis=None),
-        color=alt.Color("idx", legend=None, scale=alt.Scale()),
-        size=alt.Size("rand", legend=None, scale=alt.Scale(range=[1, 150])),
-    ))
+            # 让用户选择要显示的列
+            selected_columns = st.multiselect("选择列", columns, default=columns)
+
+            # 显示数据
+            if st.button("Run"):
+                st.write(df[selected_columns])
+
+if __name__ == "__main__":
+    main()
